@@ -4,7 +4,11 @@
 
 A simple Gradle task to automate migration from Gradle to [Pants](https://pantsbuild.github.io/).
 
-**Disclaimer:** Only Java projects are supported. The main reason behind `buildgen` task is to automate creation of most of the BUILD files in the project and all 3rdparty BUILD files that follow [3rdparty idiom](https://pantsbuild.github.io/3rdparty_jvm.html). **Manual tweaks will be required for a full migration!**
+**Disclaimer: Work in progress! A hackaton project! :-)** Only Java projects are supported. The main reason behind `buildgen` task is to automate creation of most of the BUILD files in the project and all 3rdparty BUILD files that follow [3rdparty idiom](https://pantsbuild.github.io/3rdparty_jvm.html). **Manual tweaks will be required for a full migration!**
+
+# Known "Success" Stories:
+
+1. [@fedor](https://twitter.com/fedor) was able to use `buildgen` with a 300+ projects(400+ targets) monorepo so `./pants list ::` check was passing and even a small subset of 66 targets was compiling wihtout errors.
 
 # Usage
 
