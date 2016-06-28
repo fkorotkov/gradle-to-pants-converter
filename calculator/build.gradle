@@ -1,0 +1,11 @@
+apply plugin: 'java'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compile project(":plus")
+    compile group: 'com.google.guava', name: 'guava', version: '19.0'
+    testCompile 'junit:junit:4.12'
+}
