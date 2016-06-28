@@ -99,6 +99,10 @@ abstract class BuilgenPantsTask extends DefaultTask {
         if (!project.getBuildFile().exists()) {
           continue
         }
+        // skip root project
+        if (project == project.rootProject) {
+          continue
+        }
         def address = workspace.addressForProject(project)
         def target = new JavaCompileTarget(address)
 
