@@ -1,0 +1,230 @@
+apply plugin: 'maven'
+apply plugin: 'java'
+
+dependencies {
+  compile gradleApi()
+}
+repositories {
+  mavenCentral()
+}
+
+task buildgen(type: PantsBuilgenPantsTask)
+
+class PantsBuilgenPantsTask extends BuilgenPantsTask {
+  @Override
+  void generateBUILDFiles(Workspace workspace) {
+    for (Target target : workspace.getTargets()) {
+      def buildFile = workspace.findBUILDFile(target)
+      if (target instanceof MavenArtifactTarget) {
+        buildFile << toPantsJarTarget((MavenArtifactTarget)target)
+      }
+      if (target instanceof JavaCompileTarget) {
+        buildFile << toPantsJavaTarget(workspace, (JavaCompileTarget)target)
+      }
+    }
+  }
+
+  public String toPantsJarTarget(MavenArtifactTarget target) {
+    def address = target.getAddress()
+    def targetName = address.substring(address.indexOf(':') + 1)
+"""jar_library(name='$targetName',
+  jars=[
+    jar(org='${target.getGroup()}', name='${target.getName()}', rev='${target.getVersion()}'),
+  ],
+)
+"""
+  }
+
+  public String toPantsJavaTarget(Workspace workspace, JavaCompileTarget target) {
+    def targetDir = workspace.findBUILDFile(target).getParentFile()
+    if (target.isTest() && !new File(targetDir, 'src/test/java').exists()) {
+      return ''
+    }
+    def address = target.getAddress()
+    def targetName = address.substring(address.indexOf(':') + 1)
+    def deps = new StringBuilder()
+    for (def dep : target.getDependencies().toSorted()) {
+      deps.append('\t\t')
+      deps.append('\'').append(dep).append('\'')
+      deps.append(',\n')
+    }
+    def targetType = 'target'
+    def sources = ''
+    if (target.isTest() && new File(targetDir, 'src/test/java').exists()) {
+      targetType = 'junit_tests'
+      sources = "  sources = rglobs('src/test/java/*.java')"
+    } else if (new File(targetDir, 'src/main/java').exists()) {
+      targetType = 'java_library'
+      sources = "  sources = rglobs('src/main/java/*.java')"
+    } else if (new File(targetDir, 'src/main/thrift').exists()) {
+      targetType = 'java_thrift_library'
+      sources = "  sources = rglobs('src/main/thrift/*.thrift')"
+    }
+"""$targetType(name='$targetName',
+  dependencies = [
+${deps.toString()}
+  ],
+$sources
+)
+"""
+  }
+}
+
+abstract class BuilgenPantsTask extends DefaultTask {
+  @TaskAction
+  def generate() {
+    def rootProject = getProject().getRootProject()
+    def workspace = Workspace.build(rootProject)
+    generateBUILDFiles(workspace)
+  }
+
+  abstract void generateBUILDFiles(Workspace workspace)
+
+  static class Workspace {
+    private final Map<String, Target> myTargets = new HashMap<>()
+    private File myWorkingDir = workingDir
+
+    private Workspace(File workingDir) {
+      workingDir
+    }
+
+    public Collection<Target> getTargets() {
+      return myTargets.values()
+    }
+
+    public static Workspace build(Project rootProject) {
+      def workspace = new Workspace(rootProject.getProjectDir())
+
+      for (Project project : rootProject.getAllprojects()) {
+        if (!project.getBuildFile().exists()) {
+          continue
+        }
+        def address = workspace.addressForProject(project)
+        def target = new JavaCompileTarget(address)
+
+        def compileConfiguration = project.getConfigurations().getByName("compile")
+        def runtimeConfiguration = project.getConfigurations().getByName("runtime")
+        for (Configuration configuration : [compileConfiguration, runtimeConfiguration]) {
+          target.getDependencies().addAll(workspace.dependenciesAddresses(configuration.getDependencies()))
+        }
+        workspace.addTarget(target)
+
+        def testTarget = new JavaCompileTarget("$address-tests", true)
+        testTarget.getDependencies().add(address)
+
+        def testCompileConfiguration = project.getConfigurations().getByName("testCompile")
+        def testRuntimeConfiguration = project.getConfigurations().getByName("testRuntime")
+        for (Configuration configuration : [testCompileConfiguration, testRuntimeConfiguration]) {
+          testTarget.getDependencies().addAll(workspace.dependenciesAddresses(configuration.getDependencies()))
+        }
+        workspace.addTarget(testTarget)
+      }
+
+      return workspace
+    }
+
+    private Collection<String> dependenciesAddresses(Collection<Dependency> dependencies) {
+      Collection<String> result = new TreeSet<>()
+      for (Dependency dependency : dependencies) {
+        if (dependency instanceof ProjectDependency) {
+          def dependencyAddress = addressForProject(dependency.dependencyProject)
+          result.add(dependencyAddress)
+        }
+        if (dependency instanceof ExternalModuleDependency) {
+          def externalModuleAddress = addressForExternalModule(dependency)
+          def artifactTarget = new MavenArtifactTarget(externalModuleAddress, dependency.getGroup(), dependency.getName(), dependency.getVersion())
+          addTarget(artifactTarget)
+          result.add(externalModuleAddress)
+        }
+      }
+      return result
+    }
+
+    public File findBUILDFile(Target target) {
+      def address = target.getAddress()
+      def relativePath = address.substring(0, address.indexOf(':')) + File.separator + "BUILD.pants"
+      def file = new File(myWorkingDir, relativePath)
+      if (!file.exists()) {
+        if (!file.getParentFile().exists()) {
+          file.getParentFile().mkdirs()
+        }
+        file.createNewFile()
+      }
+      return file
+    }
+
+    public String addressForProject(Project project) {
+      return "${GFileUtils.relativePath(myWorkingDir, project.getProjectDir())}:${project.getName()}"
+    }
+
+    public String addressForExternalModule(ExternalDependency externalDependency) {
+      return "3rdparty/jvm/${externalDependency.getGroup().replace('.', '/')}:${externalDependency.getName()}-${externalDependency.getVersion()}"
+    }
+
+    public void addTarget(Target target) {
+      myTargets.put(target.getAddress(), target)
+    }
+  }
+
+  static interface Target {
+    String getAddress()
+  }
+
+  static class MavenArtifactTarget implements Target {
+    private final String myAddress;
+    private final String myGroup;
+    private final String myName;
+    private final String myVersion;
+
+    public MavenArtifactTarget(String myAddress, String myGroup, String myName, String myVersion) {
+      this.myAddress = myAddress
+      this.myGroup = myGroup
+      this.myName = myName
+      this.myVersion = myVersion
+    }
+
+    @Override
+    String getAddress() {
+      return myAddress
+    }
+
+    String getGroup() {
+      return myGroup
+    }
+
+    String getName() {
+      return myName
+    }
+
+    String getVersion() {
+      return myVersion
+    }
+  }
+
+  static class JavaCompileTarget implements Target {
+    private final boolean myTest
+    private final String myAddress
+    private final Set<String> myDependencies = new TreeSet<>()
+
+    JavaCompileTarget(String address) {
+      this(address, false)
+    }
+
+    JavaCompileTarget(String address, boolean test) {
+      myAddress = address
+      myTest = test
+    }
+
+    String getAddress() {
+      return myAddress
+    }
+
+    boolean isTest() {
+      return myTest
+    }
+
+    Collection<String> getDependencies() {
+      return myDependencies
+    }
+  }
+}

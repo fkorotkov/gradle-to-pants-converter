@@ -1,0 +1,6 @@
+sudo: false
+language: java
+
+script:
+  - ./gradlew check
+  - ./convert_and_check.sh
